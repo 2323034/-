@@ -191,7 +191,19 @@ const gameManager = {
         this.monstersData = [
             { id: 'fina', name: 'フィーナ', attribute: 'fire', stats: { hp: 90, atk: 120, def: 100, tAtk: 100, tDef: 100, spd: 120 },
               skills: [
-                {id: 'fina_s1', name: 'キャンドルレイン', attribute: 'fire', power: 100, type: 'damage', target: 'all_enemies', isUnique: true, description: '敵全体に威力100の火属性ダメージ。使用後、自身の最大HPの半分のダメージを受ける。', effect: (caster) => {　if (caster.currentHp >= 45) { caster.currentHp -= 45; } else { caster.currentHp = 0; caster.isKO = true;}}
+                {
+  id: 'fina_s1',
+  name: 'キャンドルレイン',
+  attribute: 'fire',
+  power: 100,
+  type: 'damage',
+  target: 'all_enemies',
+  isUnique: true,
+  description: '敵全体に威力100の火属性ダメージ。使用後、自身の最大HPの半分のダメージを受ける。',
+  effect: (caster) => {
+    gameManager.damage(caster, caster, 11.25);
+  }
+},
                 { id: 'fina_s2', name: '振り回す', attribute: 'none', power: 80, type: 'damage', target: 'single_enemy', description: '敵一体に威力80の無属性ダメージを与える。' },
                 { id: 'fina_s3', name: '燃え上がる', attribute: 'fire', power: 0, type: 'buff', target: 'self', description: '自身の攻撃力を1.5倍にする(5ターン)。', effect: (caster) => { this.applyBuff(caster, 'atk', 1.5, 5); } },
                 { id: 'fina_s4', name: '焼き尽くす', attribute: 'fire', power: 100, type: 'damage', target: 'single_enemy', description: '敵一体に威力100の火属性ダメージを与える。' },
