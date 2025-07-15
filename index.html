@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>タイムプログレスバトル</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700&display=swap');
+        body {
+            font-family: 'M PLUS Rounded 1c', sans-serif;
+            background-color: #1a202c;
+            color: #e2e8f0;
+            overflow: hidden;
+        }
+        .attribute-fire { background-color: #e53e3e; color: white; }
+        .attribute-water { background-color: #3182ce; color: white; }
+        .attribute-electric { background-color: #d69e2e; color: white; }
+        .attribute-earth { background-color: #b7791f; color: white; }
+        .attribute-wood { background-color: #38a169; color: white; }
+        .attribute-none { background-color: #718096; color: white; }
+        .action-gauge-bar { transition: width 0.1s linear; }
+        .hp-bar { transition: width 0.3s ease-out; }
+        .monster-card { transition: all 0.3s ease; cursor: pointer; }
+        .monster-card.selected {
+            transform: translateY(-10px);
+            box-shadow: 0 0 20px 5px #4fd1c5;
+            border-color: #4fd1c5;
+        }
+        .monster-card.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .battle-character.active {
+            transform: scale(1.1);
+            box-shadow: 0 0 25px 10px #f6e05e;
+            z-index: 10;
+        }
+        .ko {
+            filter: grayscale(100%);
+            opacity: 0.6;
+        }
+        .damage-popup {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #f56565;
+            text-shadow: 2px 2px 2px black;
+            animation: float-up 1.5s ease-out forwards;
+            pointer-events: none;
+        }
+        .time-damage-popup {
+            color: #63b3ed;
+        }
+        @keyframes float-up {
+            0% { opacity: 1; transform: translate(-50%, 0); }
+            100% { opacity: 0; transform: translate(-50%, -80px); }
+        }
+        .skill-button:disabled {
+            background-color: #4a5568;
+            cursor: not-allowed;
+        }
+        #skill-tooltip {
+            position: fixed;
+            background-color: rgba(26, 32, 44, 0.95);
+            border: 1px solid #4a5568;
+            border-radius: 8px;
+            padding: 12px;
+            width: 300px;
+            z-index: 100;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body class="w-screen h-screen flex items-center justify-center">
+
+    <!-- モンスター選択画面 -->
+    <div id="selection-screen" class="w-full h-full flex flex-col items-center justify-center p-4">
+        <h1 class="text-4xl font-bold mb-2 text-gray-100">モンスター選択</h1>
+        <p class="text-lg mb-6 text-gray-300">バトルに出すモンスターを3体選んでください。</p>
+        <div id="monster-selection-container" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+            <!-- モンスターカードはJSで生成 -->
+        </div>
+        <button id="start-battle-btn" class="bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-8 rounded-lg text-xl transition duration-300 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+            バトル開始！
+        </button>
+    </div>
+
+    <!-- バトル画面 -->
+    <div id="battle-screen" class="hidden w-full h-full flex flex-col items-center justify-between p-2 md:p-4">
+        <!-- 敵チーム -->
+        <div id="enemy-team" class="w-full flex justify-around items-end gap-2"></div>
+        
+        <!-- 中央のログエリア -->
+        <div class="w-full max-w-4xl h-24 my-2">
+            <div id="log-area" class="w-full h-full bg-black bg-opacity-50 rounded-lg p-2 overflow-y-auto text-sm md:text-base">
+                <p>バトル開始！</p>
+            </div>
+        </div>
+
+        <!-- 味方チーム -->
+        <div id="player-team" class="w-full flex justify-around items-start gap-2"></div>
+
+        <!-- 技選択UI -->
+        <div id="skill-selection-ui" class="hidden w-full max-w-4xl bg-gray-800 bg-opacity-80 rounded-lg p-4 mt-2 relative">
+            <p id="skill-user-name" class="text-center font-bold text-xl mb-2"></p>
+            <div id="skill-buttons" class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <!-- 技ボタンはJSで生成 -->
+            </div>
+            <!-- 技詳細ツールチップ -->
+            <div id="skill-tooltip" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- 結果表示モーダル -->
+    <div id="result-modal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex flex-col items-center justify-center z-50">
+        <div class="bg-gray-800 p-10 rounded-lg shadow-2xl text-center">
+            <h2 id="result-message" class="text-5xl font-bold mb-6"></h2>
+            <button id="restart-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-8 rounded-lg text-xl transition duration-300">
+                もう一度遊ぶ
+            </button>
+        </div>
+    </div>
+
+
+<script>
+// ==============================================
+// ゲームのコアロジック
+// ==============================================
+const gameManager = {
+    // --- 状態管理 ---
+    monstersData: null,
+    playerTeam: [],
+    enemyTeam: [],
+    allMonsters: [],
+    selectedMonsters: new Set(),
+    gameLoopInterval: null,
+    isPlayerTurn: false,
+    activeMonster: null,
+    activeSkill: null,
+    isBattleOver: false,
+
+    // --- DOM要素 ---
+    elements: {
+        selectionScreen: document.getElementById('selection-screen'),
+        battleScreen: document.getElementById('battle-screen'),
+        monsterSelectionContainer: document.getElementById('monster-selection-container'),
+        startBattleBtn: document.getElementById('start-battle-btn'),
+        playerTeamContainer: document.getElementById('player-team'),
+        enemyTeamContainer: document.getElementById('enemy-team'),
+        logArea: document.getElementById('log-area'),
+        skillSelectionUI: document.getElementById('skill-selection-ui'),
+        skillUserName: document.getElementById('skill-user-name'),
+        skillButtons: document.getElementById('skill-buttons'),
+        skillTooltip: document.getElementById('skill-tooltip'),
+        resultModal: document.getElementById('result-modal'),
+        resultMessage: document.getElementById('result-message'),
+        restartBtn: document.getElementById('restart-btn'),
+    },
+
+    // --- 定数 ---
+    MAX_ACTION_GAUGE: 1000,
+    ATTRIBUTE_CHART: {
+        fire: { strong: 'wood', weak: 'water' },
+        water: { strong: 'fire', weak: 'electric' },
+        electric: { strong: 'water', weak: 'earth' },
+        earth: { strong: 'electric', weak: 'wood' },
+        wood: { strong: 'earth', weak: 'fire' },
+        none: { strong: null, weak: null },
+    },
+
+    /**
+     * ゲームの初期化
+     */
+    init() {
+        this.defineMonsters();
+        this.setupSelectionScreen();
+        this.elements.startBattleBtn.addEventListener('click', () => this.startBattle());
+        this.elements.restartBtn.addEventListener('click', () => window.location.reload());
+    },
+
+    /**
+     * モンスターのデータを定義
+     */
+    defineMonsters() {
+        this.monstersData = [
+            { id: 'fina', name: 'フィーナ', attribute: 'fire', stats: { hp: 90, atk: 120, def: 100, tAtk: 100, tDef: 100, spd: 120 },
+              skills: [
+                { id: 'fina_s1', name: 'キャンドルレイン', attribute: 'fire', power: 100, type: 'damage', target: 'all_enemies', isUnique: true, description: '敵全体に威力100の火属性ダメージ。使用後、自身のHPが1/3になる。', effect: (caster) => { caster.currentHp = Math.ceil(caster.currentHp / 2); } },
+                { id: 'fina_s2', name: '振り回す', attribute: 'none', power: 80, type: 'damage', target: 'single_enemy', description: '敵一体に威力80の無属性ダメージを与える。' },
+                { id: 'fina_s3', name: '燃え上がる', attribute: 'fire', power: 0, type: 'buff', target: 'self', description: '自身の攻撃力を1.5倍にする(5ターン)。', effect: (caster) => { this.applyBuff(caster, 'atk', 1.5, 5); } },
+                { id: 'fina_s4', name: '焼き尽くす', attribute: 'fire', power: 100, type: 'damage', target: 'single_enemy', description: '敵一体に威力100の火属性ダメージを与える。' },
+              ] },
+            { id: 'rena', name: 'レナ', attribute: 'water', stats: { hp: 210, atk: 60, def: 140, tAtk: 60, tDef: 100, spd: 100 },
+              skills: [
+                { id: 'rena_s1', name: 'レインコート', attribute: 'water', power: 0, type: 'special', target: 'self', isUnique: true, description: '次に受ける攻撃を一度だけ無効化する。', effect: (caster) => { this.applyStatusEffect(caster, 'raincoat', 2); } },
+                { id: 'rena_s2', name: '振り回す', attribute: 'none', power: 80, type: 'damage', target: 'single_enemy', description: '敵一体に威力80の無属性ダメージを与える。' },
+                { id: 'rena_s3', name: '水飛沫', attribute: 'water', power: 60, type: 'damage', target: 'single_enemy', description: '敵一体に威力60の水属性ダメージを与え、防御力を3/4にする(5ターン)。', effect: (caster, target) => { this.applyDebuff(target, 'def', 0.75, 5); } },
+                { id: 'rena_s4', name: '恵みの雨', attribute: 'water', power: 0, type: 'heal', target: 'self', description: '自身の最大HPの1/3を回復する。', effect: (caster) => { this.heal(caster, caster.maxHp / 3); } },
+              ] },
+            { id: 'helen', name: 'ヘレン', attribute: 'electric', stats: { hp: 120, atk: 80, def: 60, tAtk: 160, tDef: 60, spd: 160 },
+              skills: [
+                { id: 'helen_s1', name: '放電', attribute: 'electric', power: 140, type: 'damage', target: 'single_enemy', isUnique: true, description: '敵一体に威力140の電属性ダメージ。反動で次のターンは行動できない。', effect: (caster) => { this.applyStatusEffect(caster, 'discharge_cooldown', 6); } },
+                { id: 'helen_s2', name: 'ギアチェンジ', attribute: 'electric', power: 0, type: 'buff', target: 'self', description: '自身の素早さを5/4にする(5ターン)。', effect: (caster) => { this.applyBuff(caster, 'spd', 1.25, 5); } },
+                { id: 'helen_s3', name: '静電気', attribute: 'electric', power: 80, type: 'time_damage', target: 'single_enemy', description: '敵一体に威力80の電属性時間ダメージを与える。' },
+                { id: 'helen_s4', name: '排熱', attribute: 'fire', power: 60, type: 'damage', target: 'all_enemies', description: '敵全体に威力60の火属性ダメージを与える。' },
+              ] },
+            { id: 'sandy', name: 'サンディ', attribute: 'earth', stats: { hp: 210, atk: 40, def: 80, tAtk: 160, tDef: 100, spd: 80 },
+              skills: [
+                { id: 'sandy_s1', name: 'ぬかるむ', attribute: 'earth', power: 0, type: 'debuff', target: 'all_enemies', isUnique: true, description: '敵全体の時防と素早さを1/2にする(5ターン)。', effect: (caster, target) => { this.applyDebuff(target, 'tDef', 0.5, 5); this.applyDebuff(target, 'spd', 0.5, 5); } },
+                { id: 'sandy_s2', name: '岩落とし', attribute: 'earth', power: 100, type: 'damage', target: 'single_enemy', description: '敵一体に威力100の土属性ダメージを与える。' },
+                { id: 'sandy_s3', name: '砂をかける', attribute: 'earth', power: 80, type: 'time_damage', target: 'all_enemies', description: '敵全体に威力80の土属性時間ダメージを与える。' },
+                { id: 'sandy_s4', name: '叩きつける', attribute: 'none', power: 100, type: 'damage', target: 'single_enemy', description: '敵一体に威力100の無属性ダメージを与える。' },
+              ] },
+            { id: 'hedera', name: 'へデラ', attribute: 'wood', stats: { hp: 240, atk: 80, def: 120, tAtk: 40, tDef: 120, spd: 80 },
+              skills: [
+                { id: 'hedera_s1', name: 'パラサイトツリー', attribute: 'wood', power: 0, type: 'special', target: 'single_enemy', isUnique: true, description: '対象に寄生し、毎ターンHPを吸収する状態にする。', effect: (caster, target) => { this.applyStatusEffect(target, 'parasite_damage', 99, {casterId: caster.id}); this.applyStatusEffect(caster, 'parasite_heal', 99, {targetId: target.id}); } },
+                { id: 'hedera_s2', name: '絡みつく', attribute: 'wood', power: 60, type: 'damage', target: 'single_enemy', description: '敵一体に威力60の木属性ダメージを与え、素早さを3/4にする(5ターン)。', effect: (caster, target) => { this.applyDebuff(target, 'spd', 0.75, 5); } },
+                { id: 'hedera_s3', name: '倒れ込む', attribute: 'wood', power: 0, type: 'buff', target: 'self', description: '自身の防御力を5/4にし、次のターンまで敵の攻撃を全て自分に引きつける。', effect: (caster) => { this.applyBuff(caster, 'def', 1.25, 5); this.applyStatusEffect(caster, 'taunt', 5); } },
+                { id: 'hedera_s4', name: '音を立てる', attribute: 'none', power: 0, type: 'debuff', target: 'single_enemy', description: '敵一体の防御力と時防を3/4にする(5ターン)。', effect: (caster, target) => { this.applyDebuff(target, 'def', 0.75, 5); this.applyDebuff(target, 'tDef', 0.75, 5); } },
+              ] },
+            { id: 'lota', name: 'ロータ', attribute: 'none', stats: { hp: 150, atk: 100, def: 100, tAtk: 100, tDef: 100, spd: 100 },
+              skills: [
+                { id: 'lota_s1', name: '投げつける', attribute: 'none', power: 80, type: 'dual_damage', target: 'single_enemy', isUnique: true, description: '敵一体に威力80のダメージと時間ダメージを両方与える。' },
+                { id: 'lota_s2', name: '研ぎ澄ます', attribute: 'none', power: 0, type: 'buff', target: 'self', description: '自身の攻撃力と時攻を5/4にし、時防が3/4になる(5ターン)。', effect: (caster) => { this.applyBuff(caster, 'atk', 1.25, 5); this.applyBuff(caster, 'tAtk', 1.25, 5); this.applyDebuff(caster, 'tDef', 0.75, 5); } },
+                { id: 'lota_s3', name: '叩きつける', attribute: 'none', power: 100, type: 'damage', target: 'single_enemy', description: '敵一体に威力100の無属性ダメージを与える。' },
+                { id: 'lota_s4', name: '転ばせる', attribute: 'none', power: 100, type: 'time_damage', target: 'single_enemy', description: '敵一体に威力100の無属性時間ダメージを与える。' },
+              ] },
+        ];
+    },
+
+    /**
+     * モンスター選択画面のセットアップ
+     */
+    setupSelectionScreen() {
+        this.elements.monsterSelectionContainer.innerHTML = '';
+        this.monstersData.forEach(monster => {
+            const card = document.createElement('div');
+            card.className = `monster-card border-4 border-gray-600 rounded-lg p-4 bg-gray-800 text-center transition`;
+            card.dataset.monsterId = monster.id;
+            card.innerHTML = `
+                <div class="w-16 h-16 ${this.getAttributeClass(monster.attribute)} rounded-full mx-auto mb-2 flex items-center justify-center text-2xl font-bold">${monster.name.charAt(0)}</div>
+                <h3 class="text-xl font-bold">${monster.name}</h3>
+                <p class="text-sm ${this.getAttributeClass(monster.attribute)} inline-block px-2 rounded">${this.translateAttribute(monster.attribute)}</p>
+            `;
+            card.addEventListener('click', () => this.toggleMonsterSelection(monster.id));
+            this.elements.monsterSelectionContainer.appendChild(card);
+        });
+    },
+
+    /**
+     * モンスター選択のトグル処理
+     */
+    toggleMonsterSelection(id) {
+        const card = this.elements.monsterSelectionContainer.querySelector(`[data-monster-id="${id}"]`);
+        if (this.selectedMonsters.has(id)) {
+            this.selectedMonsters.delete(id);
+            card.classList.remove('selected');
+        } else {
+            if (this.selectedMonsters.size < 3) {
+                this.selectedMonsters.add(id);
+                card.classList.add('selected');
+            }
+        }
+
+        this.elements.startBattleBtn.disabled = this.selectedMonsters.size !== 3;
+        
+        const allCards = this.elements.monsterSelectionContainer.querySelectorAll('.monster-card');
+        if (this.selectedMonsters.size === 3) {
+            allCards.forEach(c => {
+                if (!this.selectedMonsters.has(c.dataset.monsterId)) {
+                    c.classList.add('disabled');
+                }
+            });
+        } else {
+            allCards.forEach(c => c.classList.remove('disabled'));
+        }
+    },
+
+    /**
+     * バトル開始処理
+     */
+    startBattle() {
+        this.playerTeam = [];
+        this.enemyTeam = [];
+        this.monstersData.forEach(m => {
+            const monsterInstance = this.createMonsterInstance(m);
+            if (this.selectedMonsters.has(m.id)) {
+                monsterInstance.isPlayer = true;
+                this.playerTeam.push(monsterInstance);
+            } else {
+                monsterInstance.isPlayer = false;
+                this.enemyTeam.push(monsterInstance);
+            }
+        });
+        this.allMonsters = [...this.playerTeam, ...this.enemyTeam];
+
+        this.elements.selectionScreen.classList.add('hidden');
+        this.elements.battleScreen.classList.remove('hidden');
+
+        this.drawBattlefield();
+        
+        this.isBattleOver = false;
+        this.log('バトル開始！');
+        this.gameLoopInterval = setInterval(() => this.gameLoop(), 100);
+    },
+
+    /**
+     * モンスターのインスタンスを生成
+     */
+    createMonsterInstance(data) {
+        // Create a new object for the instance, correctly copying properties
+        // and referencing functions to avoid issues with JSON.stringify.
+        const instance = {
+            // Copy primitive properties from the template
+            name: data.name,
+            attribute: data.attribute,
+            originalId: data.id,
+
+            // Copy the stats object to avoid shared references
+            stats: { ...data.stats },
+            
+            // Reference the skills array (which contains functions) directly
+            skills: data.skills, 
+            
+            // Define instance-specific state
+            id: `${data.id}_${Math.random().toString(36).substr(2, 9)}`,
+            maxHp: data.stats.hp,
+            currentHp: data.stats.hp,
+            actionGauge: 0,
+            isPlayer: false,
+            isKO: false,
+            buffs: [],
+            debuffs: [],
+            statusEffects: [],
+        };
+        return instance;
+    },
+    
+    /**
+     * バトルフィールドの描画
+     */
+    drawBattlefield() {
+        this.elements.playerTeamContainer.innerHTML = '';
+        this.elements.enemyTeamContainer.innerHTML = '';
+        this.allMonsters.forEach(monster => {
+            const container = monster.isPlayer ? this.elements.playerTeamContainer : this.elements.enemyTeamContainer;
+            const charDiv = document.createElement('div');
+            charDiv.id = monster.id;
+            charDiv.className = `battle-character w-1/3 max-w-xs p-2 bg-gray-800 rounded-lg shadow-md transition-all duration-300 ${monster.isPlayer ? '' : 'cursor-pointer'}`;
+            charDiv.innerHTML = this.getMonsterHTML(monster);
+
+            if (!monster.isPlayer) {
+                charDiv.addEventListener('click', () => {
+                    if (this.isPlayerTurn && this.activeSkill && (this.activeSkill.target === 'single_enemy' || this.activeSkill.target === 'special')) {
+                        this.handleTargetSelection(monster);
+                    }
+                });
+            }
+            container.appendChild(charDiv);
+        });
+    },
+
+    /**
+     * モンスター表示用のHTMLを生成
+     */
+    getMonsterHTML(monster) {
+        const hpPercentage = (monster.currentHp / monster.maxHp) * 100;
+        const gaugePercentage = (monster.actionGauge / this.MAX_ACTION_GAUGE) * 100;
+        
+        let statusIcons = '';
+        [...monster.buffs, ...monster.debuffs, ...monster.statusEffects].forEach(effect => {
+            statusIcons += `<span class="text-xs px-1 rounded ${effect.type === 'buff' ? 'bg-green-500' : 'bg-red-500'}">${effect.stat ? effect.stat.toUpperCase() : effect.name.slice(0,2)}</span> `;
+        });
+
+        return `
+            <div class="flex justify-between items-center mb-1">
+                <h4 class="font-bold text-sm md:text-lg">${monster.name}</h4>
+                <span class="text-xs ${this.getAttributeClass(monster.attribute)} px-2 rounded">${this.translateAttribute(monster.attribute)}</span>
+            </div>
+            <div class="w-full bg-gray-600 rounded-full h-4 relative">
+                <div class="hp-bar bg-red-500 h-4 rounded-full" style="width: ${hpPercentage}%"></div>
+                <span class="absolute inset-0 text-center text-xs font-bold text-white">${monster.currentHp} / ${monster.maxHp}</span>
+            </div>
+            <div class="w-full bg-gray-600 rounded-full h-3 mt-1 relative">
+                <div class="action-gauge-bar bg-blue-400 h-3 rounded-full" style="width: ${gaugePercentage}%"></div>
+            </div>
+            <div class="text-xs mt-1 h-4">${statusIcons}</div>
+        `;
+    },
+    
+    /**
+     * バトル中のUI更新
+     */
+    updateMonsterUI(monster) {
+        const el = document.getElementById(monster.id);
+        if (el) {
+            el.innerHTML = this.getMonsterHTML(monster);
+            if (monster.isKO) {
+                el.classList.add('ko');
+            }
+        }
+    },
+
+    /**
+     * ゲームループ
+     */
+    gameLoop() {
+        // ターン処理中、プレイヤーのターン、バトル終了後はループを中断
+        if (this.isPlayerTurn || this.isBattleOver || this.activeMonster) return;
+
+        const readyMonsters = [];
+
+        this.allMonsters.forEach(monster => {
+            if (monster.isKO) return;
+            
+            const currentStats = this.getEffectiveStats(monster);
+            monster.actionGauge += currentStats.spd;
+            
+            if (monster.actionGauge >= this.MAX_ACTION_GAUGE) {
+                monster.actionGauge = this.MAX_ACTION_GAUGE;
+                readyMonsters.push(monster); // 行動可能なモンスターをリストに追加
+            }
+            this.updateMonsterUI(monster);
+        });
+
+        if (readyMonsters.length > 0) {
+            // 行動可能なモンスターの中からランダムで1体を選ぶ
+            const turnMonster = readyMonsters[Math.floor(Math.random() * readyMonsters.length)];
+            this.activeMonster = turnMonster;
+            this.takeTurn(turnMonster);
+        }
+    },
+
+    /**
+     * ターン処理
+     */
+    takeTurn(monster) {
+        this.log(`${monster.name}のターン！`);
+        this.updateTurnEffects(monster);
+        
+        const monsterElement = document.getElementById(monster.id);
+        monsterElement.classList.add('active');
+
+        if (monster.isPlayer) {
+            this.isPlayerTurn = true;
+            this.showSkillSelection(monster);
+        } else {
+            this.isPlayerTurn = false;
+            setTimeout(() => this.aiAction(monster), 1000);
+        }
+    },
+
+    /**
+     * ターン開始時の効果処理
+     */
+    updateTurnEffects(monster) {
+        const parasiteHeal = monster.statusEffects.find(e => e.name === 'parasite_heal');
+        if (parasiteHeal) {
+            const target = this.allMonsters.find(m => m.id === parasiteHeal.data.targetId);
+            if(target && !target.isKO) {
+                const drainAmount = Math.ceil(target.maxHp * 0.125);
+                this.log(`${target.name}から${monster.name}がHPを${drainAmount}吸収！`);
+                this.damage(monster, target, drainAmount, false);
+                this.heal(monster, drainAmount);
+            }
+        }
+    },
+
+    /**
+     * プレイヤーの技選択UI表示
+     */
+    showSkillSelection(monster) {
+        this.elements.skillSelectionUI.classList.remove('hidden');
+        this.elements.skillUserName.textContent = `${monster.name}の行動`;
+        this.elements.skillButtons.innerHTML = '';
+        monster.skills.forEach(skill => {
+            const button = document.createElement('button');
+            const cooldownEffect = monster.statusEffects.find(e => e.name === 'discharge_cooldown');
+            const isDisabled = skill.id === 'helen_s1' && cooldownEffect;
+            
+            button.className = `skill-button p-2 rounded-lg text-white font-bold transition duration-300 ${this.getAttributeClass(skill.attribute)} hover:opacity-80`;
+            button.textContent = skill.name;
+            button.disabled = isDisabled;
+            if (isDisabled) {
+                button.title = `あと${cooldownEffect.turns - 1}ターン使用不可`;
+            }
+            
+            button.addEventListener('click', () => {
+                this.activeSkill = skill;
+                this.log(`${monster.name}は${skill.name}を選択。`);
+                this.promptForTarget(skill);
+            });
+            button.addEventListener('mouseover', (e) => this.showSkillTooltip(skill, e.currentTarget));
+            button.addEventListener('mouseout', () => this.hideSkillTooltip());
+
+            this.elements.skillButtons.appendChild(button);
+        });
+    },
+
+    /**
+     * ターゲット選択のプロンプト
+     */
+    promptForTarget(skill) {
+        this.elements.skillSelectionUI.classList.add('hidden');
+        this.hideSkillTooltip();
+        if (skill.target === 'self' || skill.target === 'all_enemies' || skill.target === 'all_allies') {
+            this.handleTargetSelection(null);
+        } else {
+            this.log('ターゲットを選択してください。');
+        }
+    },
+
+    /**
+     * ターゲット選択ハンドラ
+     */
+    handleTargetSelection(target) {
+        if (!this.isPlayerTurn || !this.activeSkill) return;
+
+        const caster = this.activeMonster;
+        let targets = [];
+
+        switch (this.activeSkill.target) {
+            case 'single_enemy':
+            case 'special': // パラサイトツリー用
+                if (!target || target.isPlayer || target.isKO) {
+                    this.log('無効なターゲットです。');
+                    this.promptForTarget(this.activeSkill);
+                    return;
+                }
+                targets.push(target);
+                break;
+            case 'self':
+                targets.push(caster);
+                break;
+            case 'all_enemies':
+                targets = this.enemyTeam.filter(m => !m.isKO);
+                break;
+            default:
+                targets.push(target);
+        }
+        
+        this.executeSkill(caster, this.activeSkill, targets);
+    },
+
+    /**
+     * AIの行動ロジック
+     */
+    aiAction(monster) {
+        const availableSkills = monster.skills.filter(s => {
+            const cooldownEffect = monster.statusEffects.find(e => e.name === 'discharge_cooldown');
+            return !(s.id === 'helen_s1' && cooldownEffect);
+        });
+        const skill = availableSkills[Math.floor(Math.random() * availableSkills.length)];
+        
+        let targets = [];
+        let potentialTargets;
+
+        switch (skill.target) {
+            case 'single_enemy':
+            case 'special':
+                potentialTargets = this.playerTeam.filter(m => !m.isKO);
+                if (potentialTargets.length > 0) {
+                    const taunter = potentialTargets.find(m => m.statusEffects.some(e => e.name === 'taunt'));
+                    if (taunter) {
+                        targets.push(taunter);
+                    } else {
+                        targets.push(potentialTargets[Math.floor(Math.random() * potentialTargets.length)]);
+                    }
+                }
+                break;
+            case 'self':
+                targets.push(monster);
+                break;
+            case 'all_enemies':
+                targets = this.playerTeam.filter(m => !m.isKO);
+                break;
+            default:
+                 potentialTargets = this.playerTeam.filter(m => !m.isKO);
+                 if (potentialTargets.length > 0) {
+                    targets.push(potentialTargets[Math.floor(Math.random() * potentialTargets.length)]);
+                 }
+        }
+        
+        if (targets.length > 0) {
+            this.executeSkill(monster, skill, targets);
+        } else {
+            this.log(`${monster.name}は行動したが、対象がいなかった。`);
+            this.endTurn();
+        }
+    },
+    
+    /**
+     * 技の実行
+     */
+    executeSkill(caster, skill, targets) {
+        this.log(`${caster.name}の「${skill.name}」！`);
+        
+        let raincoatBlocked = false;
+        if (targets.length === 1) {
+            const target = targets[0];
+            if (target.statusEffects.some(e => e.name === 'raincoat')) {
+                if (skill.type === 'damage' || skill.type === 'time_damage' || skill.type === 'dual_damage' || skill.type === 'debuff') {
+                    this.log(`${target.name}はレインコートで効果を無効化した！`);
+                    this.removeStatusEffect(target, 'raincoat');
+                    this.updateMonsterUI(target);
+                    raincoatBlocked = true;
+                }
+            }
+        }
+        if (raincoatBlocked) {
+            this.endTurn();
+            return;
+        }
+
+        const casterStats = this.getEffectiveStats(caster);
+
+        targets.forEach(target => {
+            if (target.isKO) return;
+            const targetStats = this.getEffectiveStats(target);
+
+            if (skill.type === 'damage' || skill.type === 'dual_damage') {
+                let power = skill.power;
+                if(caster.attribute === skill.attribute) power *= 1.5;
+                let rawDamage = (power * casterStats.atk / targetStats.def) * (Math.random() * 0.15 + 0.5);
+                const attrMod = this.getAttributeModifier(skill.attribute, target.attribute);
+                let damage = Math.round(rawDamage * attrMod);
+                this.damage(caster, target, damage);
+            }
+
+            if (skill.type === 'time_damage' || skill.type === 'dual_damage') {
+                let power = skill.power;
+                if(caster.attribute === skill.attribute) power *= 1.5;
+                let rawTimeDamage = (2 * power * casterStats.tAtk / targetStats.tDef) * (Math.random() * 0.15 + 2.0);
+                const attrMod = this.getAttributeModifier(skill.attribute, target.attribute);
+                let timeDamage = Math.round(rawTimeDamage * attrMod);
+                this.timeDamage(caster, target, timeDamage);
+            }
+
+            if (skill.effect) {
+                skill.effect(caster, target);
+            }
+        });
+
+        if (skill.isUnique && skill.id === 'fina_s1' && skill.effect) {
+             skill.effect(caster);
+             this.updateMonsterUI(caster);
+        }
+
+        this.endTurn();
+    },
+    
+    /**
+     * ターン終了処理
+     */
+    endTurn() {
+        if (!this.activeMonster) return; // 既に処理済みの場合は何もしない
+
+        // 状態異常のターン経過
+        this.allMonsters.forEach(m => {
+            m.buffs = m.buffs.filter(b => --b.turns > 0);
+            m.debuffs = m.debuffs.filter(d => --d.turns > 0);
+            m.statusEffects = m.statusEffects.filter(e => {
+                // レインコートは使用時に消えるのでターン経過では消さない
+                if (e.name === 'raincoat') return true;
+                e.turns--;
+                return e.turns > 0;
+            });
+        });
+
+        const activeMonsterElement = document.getElementById(this.activeMonster.id);
+        if (activeMonsterElement) {
+            activeMonsterElement.classList.remove('active');
+        }
+
+        this.activeMonster.actionGauge = 0;
+        this.updateMonsterUI(this.activeMonster);
+        
+        this.activeMonster = null;
+        this.activeSkill = null;
+        this.isPlayerTurn = false;
+        this.elements.skillSelectionUI.classList.add('hidden');
+        
+        this.checkGameOver();
+    },
+
+    /**
+     * 勝敗判定
+     */
+    checkGameOver() {
+        if (this.isBattleOver) return;
+        
+        const isPlayerTeamKO = this.playerTeam.every(m => m.isKO);
+        const isEnemyTeamKO = this.enemyTeam.every(m => m.isKO);
+
+        if (isPlayerTeamKO || isEnemyTeamKO) {
+            this.isBattleOver = true;
+            clearInterval(this.gameLoopInterval);
+            
+            setTimeout(() => {
+                this.elements.resultModal.classList.remove('hidden');
+                if (isPlayerTeamKO) {
+                    this.elements.resultMessage.textContent = '敗北...';
+                    this.elements.resultMessage.className = 'text-5xl font-bold mb-6 text-blue-400';
+                } else {
+                    this.elements.resultMessage.textContent = '勝利！';
+                    this.elements.resultMessage.className = 'text-5xl font-bold mb-6 text-yellow-400';
+                }
+            }, 2000);
+        }
+    },
+    
+    // --- 計算・効果適用ヘルパー ---
+
+    damage(caster, target, amount, showPopup = true) {
+        target.currentHp -= amount;
+        if (showPopup) this.showDamagePopup(target, amount, 'damage');
+        if (target.currentHp <= 0) {
+            target.currentHp = 0;
+            target.isKO = true;
+            this.log(`${target.name}は倒れた！`);
+        }
+        this.updateMonsterUI(target);
+    },
+
+    timeDamage(caster, target, amount) {
+        target.actionGauge -= amount;
+        this.showDamagePopup(target, amount, 'time_damage');
+        if (target.actionGauge < 0) {
+            target.actionGauge = 0;
+        }
+        this.updateMonsterUI(target);
+    },
+
+    heal(target, amount) {
+        target.currentHp += Math.round(amount);
+        if (target.currentHp > target.maxHp) {
+            target.currentHp = target.maxHp;
+        }
+        this.log(`${target.name}のHPが${Math.round(amount)}回復した！`);
+        this.updateMonsterUI(target);
+    },
+
+    applyBuff(target, stat, multiplier, turns) {
+        this.log(`${target.name}の${this.translateStat(stat)}が上がった！`);
+        target.buffs.push({ stat, multiplier, turns: turns + 1, type: 'buff' });
+    },
+
+    applyDebuff(target, stat, multiplier, turns) {
+        this.log(`${target.name}の${this.translateStat(stat)}が下がった！`);
+        target.debuffs.push({ stat, multiplier, turns: turns + 1, type: 'debuff' });
+    },
+
+    applyStatusEffect(target, name, turns, data = {}) {
+        this.log(`${target.name}は${this.translateStatusEffect(name)}状態になった！`);
+        target.statusEffects.push({ name, turns: turns, data, type: 'status' });
+    },
+    
+    removeStatusEffect(target, name) {
+        target.statusEffects = target.statusEffects.filter(e => e.name !== name);
+    },
+
+    getEffectiveStats(monster) {
+        const baseStats = monster.stats;
+        const effectiveStats = { ...baseStats };
+
+        [...monster.buffs, ...monster.debuffs].forEach(effect => {
+            if (effectiveStats[effect.stat]) {
+                effectiveStats[effect.stat] *= effect.multiplier;
+            }
+        });
+
+        return effectiveStats;
+    },
+
+    getAttributeModifier(attackAttr, defenseAttr) {
+        if (attackAttr === 'none' || defenseAttr === 'none') return 1.0;
+        const chart = this.ATTRIBUTE_CHART[attackAttr];
+        if (chart.strong === defenseAttr) {
+            this.log('効果は抜群だ！');
+            return 2.0;
+        }
+        if (chart.weak === defenseAttr) {
+            this.log('効果は今ひとつのようだ...');
+            return 0.5;
+        }
+        return 1.0;
+    },
+
+    showDamagePopup(target, amount, type) {
+        const targetElement = document.getElementById(target.id);
+        if (!targetElement) return;
+
+        const popup = document.createElement('div');
+        popup.textContent = amount;
+        popup.className = `damage-popup ${type === 'time_damage' ? 'time-damage-popup' : ''}`;
+        
+        targetElement.appendChild(popup);
+        setTimeout(() => popup.remove(), 1500);
+    },
+
+    // --- UI・表示ヘルパー ---
+
+    log(message) {
+        const p = document.createElement('p');
+        p.textContent = `> ${message}`;
+        this.elements.logArea.appendChild(p);
+        this.elements.logArea.scrollTop = this.elements.logArea.scrollHeight;
+    },
+    
+    showSkillTooltip(skill, buttonElement) {
+        const tooltip = this.elements.skillTooltip;
+        tooltip.innerHTML = this.getSkillDescriptionHTML(skill);
+        
+        const rect = buttonElement.getBoundingClientRect();
+        tooltip.style.left = `${rect.left + rect.width / 2}px`;
+        tooltip.style.top = `${rect.top}px`;
+        tooltip.style.transform = 'translate(-50%, -110%)';
+        
+        tooltip.classList.remove('hidden');
+    },
+
+    hideSkillTooltip() {
+        this.elements.skillTooltip.classList.add('hidden');
+    },
+
+    getSkillDescriptionHTML(skill) {
+        return `
+            <h5 class="font-bold text-lg mb-1">${skill.name}</h5>
+            <p class="text-sm mb-2 flex flex-wrap gap-2">
+                <span class="${this.getAttributeClass(skill.attribute)} px-2 py-0.5 rounded-full text-xs">${this.translateAttribute(skill.attribute)}</span>
+                <span class="bg-gray-600 px-2 py-0.5 rounded-full text-xs">${this.translateSkillType(skill.type)}</span>
+                ${skill.power > 0 ? `<span class="bg-gray-600 px-2 py-0.5 rounded-full text-xs">威力: ${skill.power}</span>` : ''}
+            </p>
+            <p class="text-sm text-gray-300">${skill.description}</p>
+        `;
+    },
+
+    getAttributeClass(attribute) {
+        return `attribute-${attribute}`;
+    },
+    
+    translateAttribute(attribute) {
+        const map = { fire: '火', water: '水', electric: '電', earth: '土', wood: '木', none: '無' };
+        return map[attribute] || attribute;
+    },
+
+    translateStat(stat) {
+        const map = { hp: 'HP', atk: '攻撃力', def: '防御力', tAtk: '時攻', tDef: '時防', spd: '素早さ' };
+        return map[stat] || stat;
+    },
+    
+    translateSkillType(type) {
+        const map = { damage: 'ダメージ', time_damage: '時間ダメージ', dual_damage: '複合ダメージ', buff: '強化', debuff: '弱体', heal: '回復', special: '特殊' };
+        return map[type] || type;
+    },
+
+    translateStatusEffect(name) {
+        const map = {
+            raincoat: 'レインコート',
+            discharge_cooldown: '放電後硬直',
+            parasite_damage: '寄生ダメージ',
+            parasite_heal: '寄生回復',
+            taunt: '挑発'
+        };
+        return map[name] || name;
+    }
+};
+
+// ゲーム開始
+window.onload = () => {
+    gameManager.init();
+};
+</script>
+
+</body>
+</html>
